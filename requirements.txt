@@ -1,0 +1,9 @@
+torch
+numpy
+tqdm
+nltk
+rouge-score
+scikit-learn
+sentence-transformers
+pandas
+matplotlib

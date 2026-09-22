@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.ipynb_checkpoints/
+
+# data, checkpoints and model caches
+/data/
+*.pt
+*.pkl
+lprob_cache/
+
+# generated outputs
+r_indexes_*.txt
+*.tsv
+/plots/
