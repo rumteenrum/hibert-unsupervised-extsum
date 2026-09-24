@@ -39,6 +39,10 @@ yet refactored. The thesis results are being re-evaluated with a stricter protoc
 (hyperparameters selected on the validation set only, confidence intervals, and a lead-3
 baseline), so I am not reporting numbers here until that is done.
 
+The new evaluation lives in `analysis/`: the official ROUGE-1.5.5 script, one fixed protocol for
+every system, and the released STAS model run on exactly the same documents, so that all
+comparisons are made under identical conditions rather than against numbers from other papers.
+
 ## Contents
 
 | File | Purpose |
@@ -56,6 +60,8 @@ baseline), so I am not reporting numbers here until that is done.
 | `plot_grid.py` | plots of the weight grid results |
 | `fairseq/` | modified copy of fairseq 0.5, as used by HIBERT |
 | `pyrougex/` | ROUGE implementation used by `evaluate_rouge.py` |
+| `analysis/` | the new evaluation: ROUGE-1.5.5, STAS ranking, baselines, statistics |
+| `tests/` | tests for `analysis/`, including a check against the STAS authors' ranking code |
 
 ## Setup
 
@@ -113,6 +119,34 @@ Not included:
    Note that the `SELECTED_WEIGHTS` list at the top of the file, when non-empty, overrides
    `--weight` and `--weights-file`.
 
+## Evaluation (`analysis/`)
+
+Scores use the original ROUGE-1.5.5 Perl script with the settings of STAS and HIBERT
+(`-a -c 95 -m -n 2 -w 1.2`, full-length F1, one sentence per line). It needs the Perl modules
+`XML::DOM` and `DB_File`, and `ROUGE_HOME` pointing to the directory with `ROUGE-1.5.5.pl`.
+
+Every system follows the same protocol: all of its settings are scored on a validation
+sample, one is chosen by the mean of ROUGE-1, ROUGE-2 and ROUGE-L, and the test set is scored
+once with that setting. Selection follows STAS's evaluation code, either the top three
+sentences in document order or the top three with trigram blocking.
+
+```bash
+python -m analysis.run_baselines --data DATA --out results          # LEAD-3 and label oracle
+python -m analysis.run_stas --stas-dir STAS_OUT --data DATA --out results
+python -m analysis.run_hibert_stas --hibert-dir HIBERT_OUT --data DATA --out results
+python -m analysis.compare --results results --systems stas hibert_stas
+```
+
+`DATA` holds `{valid,test}.{article,summary,label}`. `STAS_OUT` is the output of the released
+STAS model (the authors' `{k}.{valid,test}.txt` files), and `HIBERT_OUT` holds per-document
+probabilities and attention extracted from HIBERT. `analysis.stas.rank` reimplements the STAS
+ranking so it can run on any hierarchical model; `tests/test_analysis.py` checks it against the
+authors' code.
+
+`compare` reports paired differences with 95% bootstrap confidence intervals and permutation
+p-values, and the position distribution of selected sentences with its KL divergence from the
+oracle, as in the STAS paper.
+
 ## Known issues
 
 - The oracle scripts and `plot_grid.py` contain hardcoded paths from the original environment.
@@ -126,6 +160,8 @@ Not included:
   Bidirectional Transformers for Document Summarization.* ACL 2019.
 - Shusheng Xu, Xingxing Zhang, Yi Wu, Furu Wei, Ming Zhou. *Unsupervised Extractive
   Summarization by Pre-training Hierarchical Transformers.* Findings of EMNLP 2020. (STAS)
+- Vishakh Padmakumar, He He. *Unsupervised Extractive Summarization using Pointwise Mutual
+  Information.* EACL 2021.
 
 The thesis was supervised by Prof. Tomaso Erseghe.
 

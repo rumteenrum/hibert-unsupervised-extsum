@@ -13,3 +13,6 @@ lprob_cache/
 r_indexes_*.txt
 *.tsv
 /plots/
+
+# evaluation outputs
+/results/

@@ -7,3 +7,5 @@ scikit-learn
 sentence-transformers
 pandas
 matplotlib
+pyrouge
+pytest
