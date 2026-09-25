@@ -156,3 +156,35 @@ def test_rouge_per_document_scores():
     s = rouge(sums, refs)
     assert s['rouge_1'].tolist() == [1.0, 0.0]
     assert summarize(s)['rouge_1'] == pytest.approx(50.0)
+
+
+# --- HIBERT runner: criteria ablations -------------------------------------------------------
+
+def _fake_record(seed, n=6, layers=3):
+    rng = np.random.default_rng(seed)
+    attn = rng.uniform(size=(layers, n, n))
+    return {'token_logprobs': [np.log(rng.uniform(0.05, 1, 8)) for _ in range(n)],
+            'top1_logprobs': [np.log(rng.uniform(0.05, 1, 8)) for _ in range(n)],
+            'attn_masked_rows': attn / attn.sum(-1, keepdims=True),
+            'attn_unmasked': attn / attn.sum(-1, keepdims=True)}
+
+
+def test_criteria_ablations():
+    from analysis.run_hibert_stas import document_scores
+    rec = _fake_record(0)
+    recovery = stas.sentence_recovery(rec['token_logprobs'])
+    graph = stas.attention_graph(rec['attn_masked_rows'])
+
+    both = document_scores(rec, 'token_logprobs', 'attn_masked_rows', 'both')
+    assert [n for n, _ in both] == [stas.setting_name(k) for k in range(20)]
+    for (_, a), b in zip(both, stas.rank(recovery, graph)):
+        np.testing.assert_array_equal(a, b)
+
+    only_r = document_scores(rec, 'token_logprobs', 'attn_masked_rows', 'recovery-only')
+    assert [n for n, _ in only_r] == ['recovery only']
+    np.testing.assert_array_equal(only_r[0][1], recovery)
+
+    only_a = document_scores(rec, 'token_logprobs', 'attn_masked_rows', 'attention-only')
+    uniform = stas.rank(np.full(6, 1 / 6), graph)
+    for (_, a), b in zip(only_a, uniform):
+        np.testing.assert_array_equal(a, b)
