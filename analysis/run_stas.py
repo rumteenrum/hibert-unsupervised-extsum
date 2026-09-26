@@ -24,10 +24,15 @@ def settings_for(stas_dir):
             docs = stas.load_output(os.path.join(stas_dir, f'{k}.{split}.txt'))
             if len(docs) != len(articles):
                 raise ValueError(f'{k}.{split}.txt has {len(docs)} documents, expected {len(articles)}')
-            mismatched = sum(len(s) != min(MAX_SENTS, len(a)) for s, a in zip(docs, articles))
-            if mismatched:
-                # STAS drops sentences over 500 subwords, which would shift sentence indices
-                raise ValueError(f'{k}.{split}.txt: {mismatched} documents with an unexpected number of scores')
+            # STAS reads at most 512 subword tokens, so it scores a prefix of the first 30 sentences
+            # (index i is still sentence i). More scores than sentences would mean misalignment.
+            bad = sum(not 1 <= len(s) <= min(MAX_SENTS, len(a)) for s, a in zip(docs, articles))
+            if bad:
+                raise ValueError(f'{k}.{split}.txt: {bad} documents with more scores than sentences')
+            if k == 0:
+                short = sum(len(s) < min(MAX_SENTS, len(a)) for s, a in zip(docs, articles))
+                print(f'| {split}: STAS scored fewer than min(30, sentences) in {short} of {len(docs)} '
+                      f'documents (512-token limit)')
             name = stas.setting_name(k)
             settings[f'{name}, in order'] = [selection.topk_in_order(s) for s in docs]
             settings[f'{name}, trigram blocking'] = [
