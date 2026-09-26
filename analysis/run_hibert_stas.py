@@ -35,7 +35,23 @@ def document_scores(rec, lp_key, attn_key, criteria):
     return [(stas.setting_name(k), s) for k, s in enumerate(ranks)]
 
 
-def settings_for(hibert_dir, graph, recovery, criteria='both'):
+def truncate(rec, m):
+    """The record restricted to its first m sentences."""
+    out = dict(rec)
+    for key in ('token_logprobs', 'top1_logprobs', 'uncond_logprobs', 'sent_tokens'):
+        if key in rec:
+            out[key] = rec[key][:m]
+    for key in ('attn_masked_rows', 'attn_unmasked'):
+        if key in rec:
+            out[key] = rec[key][:, :m, :m]
+    out['n'] = m
+    return out
+
+
+def settings_for(hibert_dir, graph, recovery, criteria='both', prefix_dir=None, prefix_mode='graph'):
+    """prefix_dir: STAS output directory; restrict each document to the sentences STAS scored.
+    prefix_mode 'graph' ranks within that prefix only; 'candidates' ranks all sentences but
+    selects only within the prefix."""
     attn_key = 'attn_masked_rows' if graph == 'masked' else 'attn_unmasked'
     lp_key = 'token_logprobs' if recovery == 'true' else 'top1_logprobs'
 
@@ -43,13 +59,19 @@ def settings_for(hibert_dir, graph, recovery, criteria='both'):
         records = hibert.load_split(os.path.join(hibert_dir, split))
         if len(records) > len(articles):
             raise ValueError(f'{split}: {len(records)} HIBERT documents but {len(articles)} articles')
+        prefix = None
+        if prefix_dir:
+            prefix = [len(s) for s in stas.load_output(os.path.join(prefix_dir, f'0.{split}.txt'))]
         per_setting = {}
-        for rec, art in zip(records, articles):
+        for d, (rec, art) in enumerate(zip(records, articles)):
             if rec['n_sents_total'] != len(art) or rec['n'] > len(art):
                 raise ValueError(f'{split} doc {rec["doc_id"]}: {rec["n_sents_total"]} sentences in the '
                                  f'HIBERT input but {len(art)} in the text')
+            m = rec['n'] if prefix is None else min(prefix[d], rec['n'])
+            if prefix is not None and prefix_mode == 'graph':
+                rec = truncate(rec, m)
             for name, s in document_scores(rec, lp_key, attn_key, criteria):
-                per_setting.setdefault(name, []).append(s)
+                per_setting.setdefault(name, []).append(s[:m])
         settings = {}
         for name, docs in per_setting.items():
             settings[f'{name}, in order'] = [selection.topk_in_order(s) for s in docs]
@@ -67,15 +89,20 @@ def main():
     p.add_argument('--graph', choices=['masked', 'unmasked'], default='masked')
     p.add_argument('--recovery', choices=['true', 'top1'], default='true')
     p.add_argument('--criteria', choices=['both', 'recovery-only', 'attention-only'], default='both')
+    p.add_argument('--prefix-from', default=None,
+                   help='STAS output directory: use only the sentences STAS scored in each document')
+    p.add_argument('--prefix-mode', choices=['graph', 'candidates'], default='graph')
     p.add_argument('--jobs', type=int, default=4)
     a = p.parse_args()
 
     n_docs = {s: len(hibert.load_split(os.path.join(a.hibert_dir, s))) for s in experiment.SPLITS}
     system = ('hibert_stas' + ('' if a.graph == 'masked' else '_unmasked')
               + ('' if a.recovery == 'true' else '_top1')
-              + ('' if a.criteria == 'both' else '_' + a.criteria.replace('-', '_')))
-    experiment.run(system, settings_for(a.hibert_dir, a.graph, a.recovery, a.criteria), a.data, a.out,
-                   a.jobs, n_docs=n_docs)
+              + ('' if a.criteria == 'both' else '_' + a.criteria.replace('-', '_'))
+              + ('' if not a.prefix_from else f'_prefix_{a.prefix_mode}'))
+    experiment.run(system, settings_for(a.hibert_dir, a.graph, a.recovery, a.criteria,
+                                        a.prefix_from, a.prefix_mode),
+                   a.data, a.out, a.jobs, n_docs=n_docs)
 
 
 if __name__ == '__main__':

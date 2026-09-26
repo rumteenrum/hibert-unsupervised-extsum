@@ -6,6 +6,8 @@ The two modes follow STAS's evaluation code (sum_eval.py):
 - `topk_trigram_blocking`: sentences in decreasing score order, skipping any sentence that
   shares a word trigram with those already chosen, until k are chosen. Output in the order
   chosen. Trigrams are over whitespace tokens, case-sensitive, as in the original.
+
+`greedy` is the MMR-style alternative with a graded redundancy penalty.
 """
 
 
@@ -21,6 +23,18 @@ def topk_in_order(scores, k=3):
 def trigrams(sentence):
     words = sentence.split()
     return [' '.join(words[i:i + 3]) for i in range(len(words) - 2)]
+
+
+def greedy(scores, redundancy, lam, k=3):
+    """MMR-style selection: repeatedly take the sentence maximising
+    scores[s] - lam * sum(redundancy[t, s] for t already chosen). Ties go to the earlier sentence.
+    Output in the order chosen."""
+    chosen, remaining = [], list(range(len(scores)))
+    while remaining and len(chosen) < k:
+        best = max(remaining, key=lambda s: scores[s] - lam * sum(redundancy[t][s] for t in chosen))
+        chosen.append(best)
+        remaining.remove(best)
+    return chosen
 
 
 def topk_trigram_blocking(scores, sentences, k=3):

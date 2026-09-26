@@ -188,3 +188,73 @@ def test_criteria_ablations():
     uniform = stas.rank(np.full(6, 1 / 6), graph)
     for (_, a), b in zip(only_a, uniform):
         np.testing.assert_array_equal(a, b)
+
+
+def test_truncate_matches_a_shorter_document():
+    from analysis.run_hibert_stas import document_scores, truncate
+    rec = _fake_record(1, n=8)
+    short = truncate(rec, 5)
+    assert short['n'] == 5 and short['attn_masked_rows'].shape == (3, 5, 5)
+    expected = stas.rank(stas.sentence_recovery(rec['token_logprobs'][:5]),
+                         stas.attention_graph(rec['attn_masked_rows'][:, :5, :5]))
+    for (_, a), b in zip(document_scores(short, 'token_logprobs', 'attn_masked_rows', 'both'), expected):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_prefix_restricts_selection(tmp_path):
+    from analysis import run_hibert_stas
+    n_docs, prefix = 3, [4, 6, 2]
+    split = tmp_path / 'hibert' / 'test'
+    split.mkdir(parents=True)
+    records = []
+    for d in range(n_docs):
+        rec = _fake_record(10 + d, n=8)
+        rec.update(doc_id=d, n=8, n_sents_total=8, uncond_logprobs=rec['token_logprobs'],
+                   sent_tokens=[np.zeros(3)] * 8)
+        records.append(rec)
+    with open(split / 'shard_00000.pkl', 'wb') as f:
+        pickle.dump(records, f)
+    stas_dir = tmp_path / 'stas'
+    stas_dir.mkdir()
+    with open(stas_dir / '0.test.txt', 'w') as f:
+        f.write('1\n<pad>\t0\n')
+        for m in prefix:
+            f.write('Score:\t' + ' '.join(['0.1'] * m) + '\n')
+    articles = [[f'sentence {d} {i} word word' for i in range(8)] for d in range(n_docs)]
+    for mode in ('graph', 'candidates'):
+        settings = run_hibert_stas.settings_for(tmp_path / 'hibert', 'masked', 'true', 'both',
+                                                stas_dir, mode)('test', articles)
+        for sels in settings.values():
+            assert all(max(sel) < m for sel, m in zip(sels, prefix))
+
+
+# --- relevance / redundancy selection -----------------------------------------------------------
+
+def test_greedy_without_penalty_is_top_k():
+    scores = np.array([0.1, 0.9, 0.5, 0.7])
+    assert sorted(selection.greedy(scores, np.zeros((4, 4)), lam=0.0)) == selection.topk_in_order(scores)
+
+
+def test_greedy_avoids_a_duplicate():
+    scores = np.array([1.0, 0.99, 0.5])
+    red = np.array([[0, 1.0, 0], [1.0, 0, 0], [0, 0, 0]])  # sentences 0 and 1 are duplicates
+    assert selection.greedy(scores, red, lam=0.0, k=2) == [0, 1]
+    assert selection.greedy(scores, red, lam=1.0, k=2) == [0, 2]
+
+
+def test_pmi_relevance_and_matrix():
+    from analysis import pmi
+    rec = {'token_logprobs': [np.log([0.5, 0.5]), np.log([0.2])],
+           'uncond_logprobs': [np.log([0.25, 0.25]), np.log([0.2])]}
+    np.testing.assert_allclose(pmi.relevance(rec), [np.log(2), 0.0])
+    pair = {'n': 3, 'base_mean_logprob': np.array([-1.0, -2.0, -3.0], dtype=np.float32),
+            'pair_mean_logprob': np.array([[np.nan, -1.5, -2.0], [np.nan, np.nan, -2.5],
+                                           [np.nan, np.nan, np.nan]], dtype=np.float32)}
+    m = pmi.pmi_matrix(pair)
+    np.testing.assert_allclose(m, [[0, 0.5, 1.0], [0.5, 0, 0.5], [1.0, 0.5, 0]])
+
+
+def test_cosine_matrix():
+    from analysis import pmi
+    m = pmi.cosine_matrix(['a b', 'A b', 'c d'])
+    assert m[0, 1] == pytest.approx(1.0) and m[0, 2] == 0 and m[0, 0] == 0
