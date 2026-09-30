@@ -258,3 +258,67 @@ def test_cosine_matrix():
     from analysis import pmi
     m = pmi.cosine_matrix(['a b', 'A b', 'c d'])
     assert m[0, 1] == pytest.approx(1.0) and m[0, 2] == 0 and m[0, 0] == 0
+
+
+# --- coverage selection (System A) -----------------------------------------------------------------
+
+def _pair_rec(pmi_upper, base):
+    """pair record whose forward pmi(s -> d) equals pmi_upper[s, d] for s < d."""
+    n = len(base)
+    pair = np.full((n, n), np.nan, dtype=np.float32)
+    iu = np.triu_indices(n, 1)
+    pair[iu] = (np.asarray(pmi_upper)[iu] + np.asarray(base)[iu[1]]).astype(np.float32)
+    return {'n': n, 'pair_mean_logprob': pair, 'base_mean_logprob': np.asarray(base, dtype=np.float32)}
+
+
+def test_coverage_matrix_directions_clipping_and_diagonal():
+    from analysis import coverage
+    up = np.array([[0, 0.8, -0.3], [0, 0, 0.4], [0, 0, 0]])
+    c = coverage.coverage_matrix(_pair_rec(up, [-1.0, -2.0, -3.0]), rho=0.5)
+    np.testing.assert_allclose(c, [[0.8, 0.8, 0.0], [0.4, 0.8, 0.4], [0.0, 0.2, 0.8]], atol=1e-6)
+
+
+def test_coverage_large_mu_is_salience_ranking():
+    from analysis import coverage
+    rng = np.random.default_rng(0)
+    c = rng.uniform(size=(8, 8))
+    sal = rng.normal(size=8)
+    assert sorted(coverage.greedy(c, sal, mu=100.0, candidates=8)) == sorted(np.argsort(-sal)[:3].tolist())
+
+
+def test_coverage_does_not_pick_a_duplicate():
+    from analysis import coverage
+    c = np.array([[1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.6, 0.6], [0.0, 0.0, 0.0, 0.6]])
+    chosen = coverage.greedy(c, np.zeros(4), mu=0.0, candidates=4, k=2)
+    assert chosen == [0, 2]
+
+
+def test_coverage_objective_is_submodular():
+    from analysis import coverage
+    rng = np.random.default_rng(1)
+    for _ in range(50):
+        c, sal = rng.uniform(size=(7, 7)), np.zeros(7)
+        a = [0, 1]; b = [0, 1, 2, 3]; x = 5
+        gain_a = coverage.objective(c, a + [x], sal, 0) - coverage.objective(c, a, sal, 0)
+        gain_b = coverage.objective(c, b + [x], sal, 0) - coverage.objective(c, b, sal, 0)
+        assert gain_a >= gain_b - 1e-12
+
+
+def test_coverage_greedy_within_guarantee_of_optimum():
+    from itertools import combinations
+    from analysis import coverage
+    rng = np.random.default_rng(2)
+    for _ in range(30):
+        n = int(rng.integers(5, 9))
+        c, sal = rng.uniform(size=(n, n)), np.zeros(n)
+        best = max(coverage.objective(c, list(s), sal, 0) for s in combinations(range(n), 3))
+        got = coverage.objective(c, coverage.greedy(c, sal, mu=0.0, candidates=n), sal, 0)
+        assert got >= (1 - 1 / np.e) * best - 1e-12
+
+
+def test_coverage_trigram_blocking():
+    from analysis import coverage
+    c = np.eye(3)
+    sal = np.array([3.0, 2.0, 1.0])
+    sents = ['the cat sat on it', 'the cat sat down', 'birds fly high']
+    assert coverage.greedy(c, sal, mu=10.0, candidates=3, k=2, sentences=sents) == [0, 2]
