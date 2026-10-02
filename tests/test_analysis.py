@@ -322,3 +322,26 @@ def test_coverage_trigram_blocking():
     sal = np.array([3.0, 2.0, 1.0])
     sents = ['the cat sat on it', 'the cat sat down', 'birds fly high']
     assert coverage.greedy(c, sal, mu=10.0, candidates=3, k=2, sentences=sents) == [0, 2]
+
+
+# --- directed attention centrality -------------------------------------------------------------------
+
+def test_received_splits_attention_by_direction():
+    from analysis import directed
+    G = np.array([[0.0, 0.7, 0.3],      # sentence 0 attends to 1 and 2 (later)
+                  [0.6, 0.0, 0.4],
+                  [0.5, 0.5, 0.0]])
+    f, b = directed.received(G)
+    np.testing.assert_allclose(f, [0.6 + 0.5, 0.5, 0.0])   # from later sentences: G[j, i], j > i
+    np.testing.assert_allclose(b, [0.0, 0.7, 0.3 + 0.4])   # from earlier sentences: G[j, i], j < i
+    np.testing.assert_allclose(f + b, G.sum(axis=0))       # undirected = STAS's in-degree
+    np.testing.assert_allclose(directed.directed_degree(G, 1.0, -2.0), f - 2 * b)
+
+
+def test_load_graphs_round_trip(tmp_path):
+    from analysis import directed
+    gs = [np.arange(4, dtype=np.float16).reshape(2, 2), np.arange(9, dtype=np.float16).reshape(3, 3)]
+    np.savez(tmp_path / 'd.npz', doc_id=np.arange(2), nsents=np.array([2, 3]),
+             G=np.concatenate([g.ravel() for g in gs]))
+    out = directed.load_graphs(tmp_path / 'd.npz')
+    assert [o.tolist() for o in out] == [g.astype(np.float32).tolist() for g in gs]
