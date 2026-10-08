@@ -1,174 +1,106 @@
-# hibert-unsupervised-extsum
+# Directed attention for unsupervised extractive summarization
 
-Unsupervised extractive summarization on top of a pretrained hierarchical transformer
-(HIBERT). This is the code from my MSc thesis at the University of Padova (2025), which I am
-now reworking into a paper.
+This repository studies whether a hierarchical transformer's existing sentence-level attention can improve extractive summaries by distinguishing attention from earlier and later sentences. It retains the model's salience ranking and adds directional centrality, without training another sentence-similarity model.
 
-No summarization labels are used at any point. The model is only pretrained with masked
-sentence prediction, and summaries are built by scoring sentences and picking the best ones.
+The current workflow supports **STAS and HIBERT**, cached model outputs, controlled ranking comparisons and paired statistical evaluation. It builds on MSc thesis work at the University of Padova, supervised by Prof. Tomaso Erseghe. The original thesis scripts remain available; current research lives in [`analysis/`](analysis/).
 
 ## Method
 
-Every sentence in a document gets four scores:
+For a document's sentence-attention graph `G`, `G[j, i]` is attention from source sentence `j` to candidate sentence `i`. The graph has a zero diagonal and normalized rows. Split incoming attention by sentence order:
 
-| | Criterion | Computed from |
-|---|---|---|
-| r1 | how well HIBERT predicts the sentence when it is masked | model log-probabilities (as in STAS) |
-| r2 | how much attention the sentence receives from the others | sentence-level attention (as in STAS) |
-| r3 | relevance to the document | a PMI-style score from token statistics, no language model |
-| r4 | redundancy with the sentences before it | same kind of score, against preceding sentences |
+```text
+F_i = sum over j > i of G[j, i]     incoming attention from later sentences
+B_i = sum over j < i of G[j, i]     incoming attention from earlier sentences
+D_i = F_i + lambda_b * B_i
 
-The scores are min-max normalised within each document and combined as
-
-```
-score = α·r1 + β·r2 + γ_rel·r3 − γ_red·r4
+score_i = z(salience_i) + mu * z(D_i)
 ```
 
-Sentences shorter than `L` tokens are skipped, and the `k` highest-scoring sentences are
-returned in their original order. The scoring scripts evaluate every weight combination on a
-0.2 grid with α + β + γ_rel + γ_red = 1 (56 combinations) in a single pass, since the expensive
-part, running HIBERT over each document, is cached and reused.
+`salience` is the existing STAS-style ranking, computed from masked-sentence recovery and attention propagation. `z` standardizes scores within each document. The original directed reference uses `lambda_b = -0.5` and `mu = 1`. Summaries select up to three sentences using the same trigram-blocking rule as the comparison baseline.
 
-Besides the token-based r3/r4 above, the repository has variants that compute them with
-sentence-BERT embeddings, n-gram overlap and TF-IDF.
+Inference does not require summary labels or a separately trained summarization model. Reference summaries **are used for validation-based parameter selection and evaluation**.
 
-## Status
+Direction also introduces a preference for earlier sentences: they have more later sources and fewer earlier sources. A negative earlier-attention weight therefore does not, by itself, establish redundancy removal. Position-only and uniform-attention residual controls investigate this distinction.
 
-Work in progress. The files are the thesis code, renamed to say what they do but otherwise not
-yet refactored. The thesis results are being re-evaluated with a stricter protocol
-(hyperparameters selected on the validation set only, confidence intervals, and a lead-3
-baseline), so I am not reporting numbers here until that is done.
+## Current research scope
 
-The new evaluation lives in `analysis/`: the official ROUGE-1.5.5 script, one fixed protocol for
-every system, and the released STAS model run on exactly the same documents, so that all
-comparisons are made under identical conditions rather than against numbers from other papers.
+- Original directed STAS and HIBERT have received validation and fixed-setting test evaluation. HIBERT is compared both on a graph restricted to the STAS sentence prefix and on its full available graph.
+- Residual-direction variants and a position-only control are separate experiments; they do not replace the original reference.
+- A denser validation grid reuses scores for identical document/summary selections to avoid repeated ROUGE computation. It is exploratory work conducted after original test evaluation, not independent confirmation.
+- Fresh validation controls, matching-preprocessing PACSUM comparisons and a second dataset remain unfinished. Superiority over prior directional methods and a redundancy mechanism are not established.
 
-## Contents
+The original test set has already been inspected. New variants must not use it for tuning; previously inspected validation samples are not fresh confirmation.
 
-| File | Purpose |
+## Repository layout
+
+| Path | Purpose |
 |---|---|
-| `binarize_data.py` | converts the tokenized text into fairseq's binary format |
-| `score_pmi.py` | main method: r1, r2 plus token-based r3/r4; caches model outputs per document |
-| `score_pmi_tempcache.py` | same method, older version with a temporary cache |
-| `score_sbert.py` | r3/r4 from sentence-BERT cosine similarity |
-| `score_sbert_rel_pmi_red.py` | r3 from sentence-BERT, r4 token-based |
-| `score_ngram.py` | r3/r4 from n-gram overlap (`n` is set inside the script) |
-| `score_tfidf.py` | r3/r4 from TF-IDF cosine similarity |
-| `evaluate_rouge.py` | ROUGE-1/2 and ROUGE-Lsum for the selected sentences |
-| `oracle_exactly3.py`, `oracle_upto3.py` | greedy ROUGE oracles with exactly / up to 3 sentences |
-| `oracle_from_labels.py` | oracle built from the extractive labels |
-| `plot_grid.py` | plots of the weight grid results |
-| `fairseq/` | modified copy of fairseq 0.5, as used by HIBERT |
-| `pyrougex/` | ROUGE implementation used by `evaluate_rouge.py` |
-| `analysis/` | the new evaluation: ROUGE-1.5.5, STAS ranking, baselines, statistics |
-| `tests/` | tests for `analysis/`, including a check against the STAS authors' ranking code |
+| [`analysis/stas.py`](analysis/stas.py), [`analysis/hibert.py`](analysis/hibert.py) | STAS ranking and cached HIBERT outputs |
+| [`analysis/directed.py`](analysis/directed.py) | Earlier/later incoming attention |
+| [`analysis/run_directed.py`](analysis/run_directed.py), [`analysis/run_directed_hibert.py`](analysis/run_directed_hibert.py) | Original directed validation workflows |
+| [`analysis/run_directed_test.py`](analysis/run_directed_test.py) | Fixed original test comparisons with baseline reproduction checks |
+| [`analysis/run_directed_residual.py`](analysis/run_directed_residual.py), [`analysis/run_directed_hibert_residual.py`](analysis/run_directed_hibert_residual.py) | Uniform-attention residual controls |
+| [`analysis/run_position_control.py`](analysis/run_position_control.py) | Position-only tuning and locked holdout comparison |
+| [`analysis/run_directed_dense.py`](analysis/run_directed_dense.py) | Manifest-checked dense grid with shared summary scoring |
+| [`analysis/experiment.py`](analysis/experiment.py), [`analysis/rouge.py`](analysis/rouge.py), [`analysis/stats.py`](analysis/stats.py) | Shared evaluation, ROUGE and paired statistics |
+| [`tests/`](tests/) | Ranking equivalence and experiment regressions |
+| [`fairseq/`](fairseq/) | Vendored historical fairseq implementation used by HIBERT |
+| [`docs/legacy-workflow.md`](docs/legacy-workflow.md) | Thesis-era scoring scripts and usage |
 
-## Setup
+## Setup and required artifacts
+
+Run from the repository root:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`fairseq/` is vendored and imported from the repository root, so run the scripts from there;
-it does not need to be installed.
+Analysis runs on CPU **after model outputs have been extracted**. Extracting masked-sentence probabilities and attention requires pretrained models and GPU inference. Models, datasets and extraction artifacts are not bundled.
 
-Not included:
+Required inputs:
 
-- **CNN/DailyMail**, sentence-split and BPE-encoded as in HIBERT, as
-  `{training,validation,test}.{article,summary,label}`, plus the HIBERT dictionary.
-- **The pretrained HIBERT_M checkpoint** (open-domain + in-domain) from the HIBERT authors.
-
-## Usage
-
-1. Binarize the data:
-
-   ```bash
-   python binarize_data.py --source-lang article --target-lang label \
-       --trainpref DATA/training --validpref DATA/validation --testpref DATA/test \
-       --srcdict DICT --destdir DATA_BIN
-   ```
-
-2. Score sentences and write the selections for all 56 weight combinations. The scripts
-   reuse fairseq's training entry point, so several optimizer flags are required even though
-   nothing is trained:
-
-   ```bash
-   python score_pmi.py DATA_BIN \
-       --task pretrain_document_modeling -a doc_pretrain_transformer_medium \
-       --criterion pretrain_doc_loss --restore-file CHECKPOINT \
-       --raw-valid DATA/validation --raw-test DATA/test --save-dir OUT \
-       --optimizer adam --lr 0.0001 --lr-scheduler inverse_sqrt --warmup-updates 10000 \
-       --warmup-init-lr 1e-07 --min-lr 1e-09 --adam-betas '(0.9, 0.999)' \
-       --weight-decay 0.01 --label-smoothing 0.1 --dropout 0.1 --relu-dropout 0.1 \
-       --attention-dropout 0.1 --max-sentences 1 --max-sentences-valid 1 \
-       --masked-sent-loss-weight 1 --sent-label-weight 0
-   ```
-
-   Output: one file per weight combination, `OUT/r_indexes_alpha*_beta*_gamma_rel*_gamma_red*.txt`,
-   with a line `Doc i: [sentence indices]` per document. Model outputs are cached in
-   `OUT/lprob_cache/`, so an interrupted run resumes where it stopped. The split, `k` and `L`
-   are currently set inside `main2()`.
-
-3. Compute ROUGE:
-
-   ```bash
-   python evaluate_rouge.py --article-path DATA/test.article --summary-path DATA/test.summary \
-       --indexes-dir OUT --out results.tsv
-   ```
-
-   Note that the `SELECTED_WEIGHTS` list at the top of the file, when non-empty, overrides
-   `--weight` and `--weights-file`.
-
-## Evaluation (`analysis/`)
-
-Scores use the original ROUGE-1.5.5 Perl script with the settings of STAS and HIBERT
-(`-a -c 95 -m -n 2 -w 1.2`, full-length F1, one sentence per line). It needs the Perl modules
-`XML::DOM` and `DB_File`, and `ROUGE_HOME` pointing to the directory with `ROUGE-1.5.5.pl`.
-
-Every system follows the same protocol: all of its settings are scored on a validation
-sample, one is chosen by the mean of ROUGE-1, ROUGE-2 and ROUGE-L, and the test set is scored
-once with that setting. Selection follows STAS's evaluation code, either the top three
-sentences in document order or the top three with trigram blocking.
+- Sentence-split CNN/DailyMail articles and reference summaries, with identical preprocessing across systems. Evaluation expects `valid.article`, `valid.summary`, `test.article` and `test.summary`; label-oracle evaluation also needs label files.
+- STAS score files named `{setting}.{split}.txt`. Directed STAS additionally needs aligned `stas_dump.{split}.npz` attention dumps from the patched extraction workflow.
+- HIBERT per-document recovery/attention shards under `valid/` and `test/`. Matching STAS score files define the sentence prefix when required.
+- Official **ROUGE-1.5.5**, its data files and Perl modules `XML::DOM` and `DB_File`. Set `ROUGE_HOME` to the directory containing `ROUGE-1.5.5.pl`:
 
 ```bash
-python -m analysis.run_baselines --data DATA --out results          # LEAD-3 and label oracle
+export ROUGE_HOME=/path/to/ROUGE-1.5.5
+```
+
+Vendored fairseq and thesis-era extraction scripts are historical code, not a promise of compatibility with current PyTorch. See the [legacy guide](docs/legacy-workflow.md).
+
+## Evaluation examples
+
+Baseline runners select settings on validation before scoring test:
+
+```bash
+python -m analysis.run_baselines --data DATA --out results
 python -m analysis.run_stas --stas-dir STAS_OUT --data DATA --out results
 python -m analysis.run_hibert_stas --hibert-dir HIBERT_OUT --data DATA --out results
 python -m analysis.compare --results results --systems stas hibert_stas
 ```
 
-`DATA` holds `{valid,test}.{article,summary,label}`. `STAS_OUT` is the output of the released
-STAS model (the authors' `{k}.{valid,test}.txt` files), and `HIBERT_OUT` holds per-document
-probabilities and attention extracted from HIBERT. `analysis.stas.rank` reimplements the STAS
-ranking so it can run on any hierarchical model; `tests/test_analysis.py` checks it against the
-authors' code.
+Screen original directed STAS on validation using cached scores and attention:
 
-`compare` reports paired differences with 95% bootstrap confidence intervals and permutation
-p-values, and the position distribution of selected sentences with its KL divergence from the
-oracle, as in the STAS paper.
+```bash
+python -m analysis.run_directed --dump-dir STAS_DUMP --data VALIDATION_DATA --out results/directed_validation
+```
 
-## Known issues
+Use `--help` on each runner for arguments. Some experiments require previous reports, cached baseline scores or a frozen sample manifest. The dense runner also expects the original shared-workspace artifact layout. These are experiment-specific workflows, rather than end-to-end commands for an arbitrary dataset.
 
-- The oracle scripts and `plot_grid.py` contain hardcoded paths from the original environment.
-- `oracle_from_labels.py` imports a module that is not part of this repository.
-- The `score_*.py` scripts still contain fairseq's unused training loop alongside the scoring
-  code in `main2()`.
+ROUGE uses the original Perl evaluator with `-a -c 95 -m -n 2 -w 1.2`, full-length F1 and one sentence per line. Parameter selection uses the mean of ROUGE-1, ROUGE-2 and ROUGE-L. Comparisons retain per-document selections/scores and report paired bootstrap confidence intervals, permutation tests and sentence-position diagnostics. Preserve sentence ordering and selection rules when reproducing a comparison.
 
-## References
+Run tests after configuring ROUGE:
 
-- Xingxing Zhang, Furu Wei, Ming Zhou. *HIBERT: Document Level Pre-training of Hierarchical
-  Bidirectional Transformers for Document Summarization.* ACL 2019.
-- Shusheng Xu, Xingxing Zhang, Yi Wu, Furu Wei, Ming Zhou. *Unsupervised Extractive
-  Summarization by Pre-training Hierarchical Transformers.* Findings of EMNLP 2020. (STAS)
-- Vishakh Padmakumar, He He. *Unsupervised Extractive Summarization using Pointwise Mutual
-  Information.* EACL 2021.
+```bash
+pytest -q
+```
 
-The thesis was supervised by Prof. Tomaso Erseghe.
+## Prior work and license
 
-## License
+The work builds on HIBERT (Zhang, Wei and Zhou, ACL 2019), STAS (Xu et al., Findings of EMNLP 2020), and PMI-based summarization (Padmakumar and He, EACL 2021). PACSUM already uses preceding/following centrality; direction itself is not the novelty claimed here. The question is whether existing asymmetric model attention can supply a useful directional term while retaining its salience ranking.
 
-MIT (see `LICENSE`), except for code derived from other projects:
-
-- `fairseq/`, `binarize_data.py` and the `score_*.py` scripts are based on fairseq and remain
-  under its BSD license (`LICENSE-fairseq`, `PATENTS`).
-- `pyrougex/google_rouge.py` is Google code under the Apache License 2.0.
+MIT ([LICENSE](LICENSE)), except for inherited components: fairseq-derived code retains its BSD license ([LICENSE-fairseq](LICENSE-fairseq), [PATENTS](PATENTS)); `pyrougex/google_rouge.py` is Google code under Apache 2.0.
