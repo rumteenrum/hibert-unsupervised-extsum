@@ -53,11 +53,19 @@ def rouge(summaries, references):
                 with open(os.path.join(d, f'{i:0{width}d}.{ext}'), 'w', encoding='utf8') as f:
                     f.write('\n'.join(sents) + '\n')
 
-        r155 = Rouge155(home)
+        # pyrouge 0.1.3 splits option strings on whitespace. A temporary,
+        # space-free alias preserves paths after moving the workspace.
+        alias = os.path.join(tmp, 'rouge-home')
+        os.symlink(os.path.abspath(home), alias, target_is_directory=True)
+        class SessionRouge155(Rouge155):
+            def save_home_dir(self):
+                # Never persist a temporary alias into the user's settings.
+                pass
+        r155 = SessionRouge155(alias)
         r155.system_dir, r155.model_dir = sys_dir, ref_dir
         r155.system_filename_pattern = r'(\d+).test'
         r155.model_filename_pattern = '#ID#.gold'
-        output = r155.convert_and_evaluate(rouge_args=f'{ROUGE_ARGS} -d -e {home}/data')
+        output = r155.convert_and_evaluate(rouge_args=f'{ROUGE_ARGS} -d -e {alias}/data')
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

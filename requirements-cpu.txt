@@ -1,0 +1,8 @@
+# Tested local analysis stack; GPU extraction retains its separate environment.
+--extra-index-url https://download.pytorch.org/whl/cpu
+-r requirements.txt
+torch==2.5.1+cpu
+sentence-transformers==5.1.1
+transformers==4.57.1
+huggingface-hub==0.35.3
+tokenizers==0.22.1

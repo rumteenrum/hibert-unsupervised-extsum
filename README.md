@@ -54,7 +54,7 @@ Run from the repository root:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-cpu.txt
 ```
 
 Analysis runs on CPU **after model outputs have been extracted**. Extracting masked-sentence probabilities and attention requires pretrained models and GPU inference. Models, datasets and extraction artifacts are not bundled.
@@ -67,8 +67,21 @@ Required inputs:
 - Official **ROUGE-1.5.5**, its data files and Perl modules `XML::DOM` and `DB_File`. Set `ROUGE_HOME` to the directory containing `ROUGE-1.5.5.pl`:
 
 ```bash
-export ROUGE_HOME=/path/to/ROUGE-1.5.5
+export ROUGE_HOME="/path/to/ROUGE-1.5.5"
 ```
+
+If ROUGE-1.5.5 sits in a `tools/` directory next to this repository,
+`scripts/research-env.sh` activates `.venv`, sets `ROUGE_HOME` and adds
+user-local Perl modules (`~/perl5`) to `PERL5LIB`:
+
+```bash
+source scripts/research-env.sh
+python -m pytest tests -q
+```
+
+`requirements-cpu.txt` pins a CPU-only PyTorch/Transformers stack for the
+analysis code; GPU extraction uses its own environment. Paths containing spaces
+are supported.
 
 Vendored fairseq and thesis-era extraction scripts are historical code, not a promise of compatibility with current PyTorch. See the [legacy guide](docs/legacy-workflow.md).
 
